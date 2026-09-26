@@ -986,6 +986,54 @@ def make_video_segment(segment_id, material_id, start, duration, width, height, 
     return segment
 
 
+def zoom_keyframe(offset, value):
+    return {
+        "id": new_id(),
+        "curveType": "Line",
+        "time_offset": round(offset),
+        "left_control": {"x": 0.0, "y": 0.0},
+        "right_control": {"x": 0.0, "y": 0.0},
+        "values": [round(value, 6)],
+        "string_value": "",
+        "graphID": ""
+    }
+
+
+def zoom_keyframe_group(property_type, duration, start_scale, end_scale):
+    return {
+        "id": new_id(),
+        "material_id": "",
+        "property_type": property_type,
+        "keyframe_list": [zoom_keyframe(0, start_scale), zoom_keyframe(duration, end_scale)]
+    }
+
+
+def apply_zoom(segments, mode, amount):
+    # Ken Burns zoom: the scale keyframes CapCut draws as diamonds in the keyframe
+    # panel. time_offset is RELATIVE to the clip (0 = clip start, duration = clip
+    # end) because absolute offsets only animate the clip that sits at t=0.
+    # clip.scale keeps the fit/fill/native placement scale and the keyframes
+    # multiply it, so a zoomed clip stays framed the way the placement asked.
+    if mode == "none" or not segments:
+        return 0
+    for index, segment in enumerate(segments):
+        clip = segment.get("clip") or {}
+        scale = (clip.get("scale") or {}).get("x")
+        base = float(scale) if isinstance(scale, (int, float)) and scale > 0 else 1.0
+        if mode == "in":
+            start_scale, end_scale = base, base * (1.0 + amount)
+        elif mode == "out":
+            start_scale, end_scale = base * (1.0 + amount), base
+        else:
+            start_scale, end_scale = (base, base * (1.0 + amount)) if index % 2 == 0 else (base * (1.0 + amount), base)
+        duration = (segment.get("target_timerange") or {}).get("duration") or 0
+        segment["common_keyframes"] = [
+            zoom_keyframe_group("KFTypeScaleX", duration, start_scale, end_scale),
+            zoom_keyframe_group("KFTypeScaleY", duration, start_scale, end_scale)
+        ]
+    return len(segments)
+
+
 def make_audio_track(material_id, duration, track_index, materials):
     ids = {
         "speed": new_id(),
@@ -1130,7 +1178,7 @@ def validate_generated(target, root_meta, media_count, audio_expected, total):
         raise RuntimeError("The CapCut project list entry is invalid.")
 
 
-def install_project(root, template, name, timing, ratio, fps, placement, audio, audio_seconds, assume_yes):
+def install_project(root, template, name, timing, ratio, fps, placement, audio, audio_seconds, assume_yes, zoom="none", zoom_amount=0.1):
     root_meta_path = root / "root_meta_info.json"
     root_meta = load_json(root_meta_path)
     target = root / name
@@ -1203,6 +1251,7 @@ def install_project(root, template, name, timing, ratio, fps, placement, audio, 
                 registrations.append(registration(destination, width, height, 5_000_000, "photo", now_seconds, now_microseconds + index))
             materials["videos"].append(material)
             segments.append(segment)
+        apply_zoom(segments, zoom, zoom_amount)
         info["tracks"].append({"id": new_id(), "type": "video", "segments": segments, "flag": 0, "attribute": 0, "name": "", "is_default_name": True})
         if audio is not None:
             relative_audio = Path("banong-media") / f"audio-{audio.name}"
@@ -1348,6 +1397,32 @@ def parse_fps(value):
     return number
 
 
+def parse_zoom(value):
+    normalized = str(value).strip().casefold().replace(" ", "").replace("_", "").replace("-", "")
+    aliases = {
+        "none": "none", "off": "none", "no": "none",
+        "in": "in", "zoomin": "in",
+        "out": "out", "zoomout": "out",
+        "alternate": "alternate", "alt": "alternate", "alternating": "alternate"
+    }
+    if normalized not in aliases:
+        raise ValueError("choose none, in, out, or alternate")
+    return aliases[normalized]
+
+
+def parse_zoom_amount(value):
+    text = str(value).strip().rstrip("%")
+    if not text:
+        raise ValueError("empty value")
+    try:
+        percent = float(text)
+    except ValueError:
+        raise ValueError("use a percent such as 10 or 10%") from None
+    if not math.isfinite(percent) or percent <= 0 or percent > 100:
+        raise ValueError("choose an amount between 1 and 100 percent")
+    return percent / 100.0
+
+
 def self_test():
     cases = {
         "00-05.png": 5.0,
@@ -1375,6 +1450,36 @@ def self_test():
     fit_segment = make_photo_segment(new_id(), new_id(), 0, 1_000_000, 1376, 768, 1920, 1080, "fit", [])
     if native_segment["clip"]["scale"] != {"x": 1.0, "y": 1.0} or abs(fill_segment["clip"]["scale"]["x"] - 1.40625) > 0.00001 or abs(fit_segment["clip"]["scale"]["x"] - 1.3953488372) > 0.00001:
         raise RuntimeError("Scale self-test failed.")
+    zoom_cases = {
+        "none": [(1.0, 1.0), (1.0, 1.0)],
+        "in": [(1.0, 1.1), (1.0, 1.1)],
+        "out": [(1.1, 1.0), (1.1, 1.0)],
+        "alternate": [(1.0, 1.1), (1.1, 1.0)]
+    }
+    for mode, expected in zoom_cases.items():
+        segments = [make_photo_segment(new_id(), new_id(), 0, 1_000_000, 1920, 1080, 1920, 1080, "native", []) for _ in range(2)]
+        apply_zoom(segments, mode, 0.1)
+        for segment, (want_start, want_end) in zip(segments, expected):
+            groups = segment["common_keyframes"]
+            if mode == "none":
+                if groups:
+                    raise RuntimeError(f"Zoom self-test failed for {mode}: keyframes were written.")
+                continue
+            if [group["property_type"] for group in groups] != ["KFTypeScaleX", "KFTypeScaleY"]:
+                raise RuntimeError(f"Zoom self-test failed for {mode}: wrong property types.")
+            for group in groups:
+                frames = group["keyframe_list"]
+                if len(frames) != 2 or frames[0]["time_offset"] != 0 or frames[1]["time_offset"] != 1_000_000:
+                    raise RuntimeError(f"Zoom self-test failed for {mode}: wrong keyframe offsets.")
+                if abs(frames[0]["values"][0] - want_start) > 0.00001 or abs(frames[1]["values"][0] - want_end) > 0.00001:
+                    raise RuntimeError(f"Zoom self-test failed for {mode}: wrong values {frames[0]['values'][0]} -> {frames[1]['values'][0]}.")
+                if frames[0]["curveType"] != "Line" or group["material_id"] != "":
+                    raise RuntimeError(f"Zoom self-test failed for {mode}: wrong keyframe shape.")
+    fill_zoom = [make_photo_segment(new_id(), new_id(), 0, 2_000_000, 1376, 768, 1920, 1080, "fill", [])]
+    apply_zoom(fill_zoom, "in", 0.1)
+    fill_values = [frame["values"][0] for frame in fill_zoom[0]["common_keyframes"][0]["keyframe_list"]]
+    if abs(fill_values[0] - 1.40625) > 0.00001 or abs(fill_values[1] - 1.40625 * 1.1) > 0.00001:
+        raise RuntimeError("Zoom self-test failed: fill placement scale was not preserved.")
     original_input = builtins.input
     try:
         builtins.input = lambda prompt: ""
@@ -1402,6 +1507,8 @@ def build_parser():
     placement = parser.add_mutually_exclusive_group()
     placement.add_argument("--fit", action="store_true")
     placement.add_argument("--fill", action="store_true")
+    parser.add_argument("--zoom", type=parse_zoom, default="none", help="Ken Burns zoom on every clip: none, in, out, or alternate")
+    parser.add_argument("--zoom-amount", type=parse_zoom_amount, default=0.1, metavar="PERCENT", help="Ken Burns zoom amount in percent, 1-100 (default 10)")
     parser.add_argument("--draft-root")
     parser.add_argument("--template")
     parser.add_argument("--dry-run", action="store_true")
@@ -1498,6 +1605,10 @@ def main():
         raise RuntimeError("Project name is invalid.")
     ratio = args.ratio or (ask("Ratio", "16:9", parse_ratio) if interactive else "16:9")
     fps = args.fps or (ask("Frame rate", "30", parse_fps) if interactive else 30)
+    zoom = args.zoom if "--zoom" in sys.argv or not interactive else ask("Ken Burns zoom (none/in/out/alternate)", "none", parse_zoom)
+    zoom_amount = args.zoom_amount
+    if zoom != "none" and "--zoom-amount" not in sys.argv and interactive:
+        zoom_amount = ask("Ken Burns zoom amount in percent", "10", parse_zoom_amount)
     placement = "fill" if args.fill else ("fit" if args.fit else "native")
     template = find_template(root, args.template)
     matching = [entry for entry in load_json(root / "root_meta_info.json").get("all_draft_store", []) if entry.get("draft_name", "").casefold() == name.casefold()]
@@ -1509,6 +1620,7 @@ def main():
     print(f"Average clip: {format_time(timing['total'] // len(media))}")
     print(f"Ratio: {ratio} at {fps} fps")
     print(f"Placement: {placement}")
+    print(f"Zoom: {zoom}" + (f" {zoom_amount * 100:g}%" if zoom != "none" else ""))
     print(f"Audio: {audio if audio else 'none'}")
     print(f"Template: {template}")
     if matching:
@@ -1519,7 +1631,7 @@ def main():
     if args.dry_run:
         print("Dry run complete. No files were changed.")
         return
-    target, backups = install_project(root, template, name, timing, ratio, fps, placement, audio, audio_seconds, args.yes)
+    target, backups = install_project(root, template, name, timing, ratio, fps, placement, audio, audio_seconds, args.yes, zoom, zoom_amount)
     print()
     print(f"Created: {target}")
     print(f"Length: {format_time(timing['total'])}")

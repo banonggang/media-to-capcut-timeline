@@ -63,7 +63,7 @@ audio when the source contains an audio stream.
 It does not add:
 
 - Transitions
-- Zooms or pans
+- Pans, and no zoom unless you ask for Ken Burns zoom
 - Text
 - Stickers
 - Color effects
@@ -74,6 +74,7 @@ The default project settings are:
 - Canvas: 16:9 landscape, 1920 x 1080
 - Frame rate: 30 fps
 - Placement: native 100% scale (no automatic enlargement)
+- Zoom: none (no Ken Burns animation)
 - Media order: filename order
 - Project name: current month and day, such as 0925
 
@@ -235,15 +236,20 @@ Supported audio extensions are:
    CapCut project name
    Ratio
    Frame rate
+   Ken Burns zoom (none/in/out/alternate)
+   Ken Burns zoom amount in percent
 
-    The target-length prompt is shown for even-spacing mode. Timestamp mode uses
-    the times encoded in the image and video filenames and asks for the last
-    clip length instead.
+   The target-length prompt is shown for even-spacing mode. Timestamp mode uses
+   the times encoded in the image and video filenames and asks for the last
+   clip length instead.
+
+   The zoom amount prompt is only shown when the zoom mode is not none.
 
 6. Review the summary.
 
    It shows the project name, image/video counts, timing mode, total length,
-   average media duration, ratio, frame rate, placement, audio, and template.
+   average media duration, ratio, frame rate, placement, zoom, audio, and
+   template.
 
 7. Type Y when asked:
 
@@ -341,6 +347,51 @@ To enlarge media until it covers the entire frame and crop any excess, run:
 Native, fit, and fill are centered. Native keeps the source at 1.0 scale; fit
 keeps the whole source visible; fill crops the source.
 
+## KEN BURNS ZOOM
+
+Every clip can get a slow scale animation, the same effect as the diamond
+keyframes in CapCut's keyframe panel. Choose one of four modes:
+
+| Mode | Effect on each clip |
+| --- | --- |
+| `none` | No zoom. This is the default. |
+| `in` | Starts at the placement scale and slowly zooms in. |
+| `out` | Starts zoomed in and slowly pulls back to the placement scale. |
+| `alternate` | Clip 1 zooms in, clip 2 zooms out, clip 3 zooms in, and so on. |
+
+The zoom amount is a percentage from 1 to 100 and defaults to 10. The animation
+is linear and covers each clip from its own first frame to its own last frame,
+so every clip keeps its own length.
+
+The keyframes multiply the placement scale, so zoom and placement combine. With
+--fill a clip still covers the frame at the start of the zoom; with --fit a clip
+still shows the whole source at the start of the zoom. Because the motion grows
+from the placement scale, --fill or --fit gives the cleanest result. Under native
+placement, zooming in on a source smaller than the canvas keeps its black
+borders.
+
+At the prompt, answer:
+
+```text
+Ken Burns zoom (none/in/out/alternate) [none]:
+```
+
+Or set it directly:
+
+```text
+"./Media to Capcut Timeline by Banong Gang.command" --zoom alternate
+"./Media to Capcut Timeline by Banong Gang.command" --zoom in --zoom-amount 15
+```
+
+The same options work on Windows:
+
+```text
+"Media to Capcut Timeline by Banong Gang.bat" --zoom alternate
+```
+
+The summary prints the chosen mode and amount, for example `Zoom: alternate 15%`,
+so a dry run shows exactly what a real run would apply.
+
 ## USEFUL COMMAND-LINE OPTIONS
 
 | Option | Description |
@@ -354,6 +405,8 @@ keeps the whole source visible; fill crops the source.
 | `--fps 24\|25\|30\|50\|60` | Select the frame rate. |
 | `--fit` | Keep the whole image or video frame visible, scaling it to fit. |
 | `--fill` | Enlarge media to cover the frame and crop any excess. |
+| `--zoom none\|in\|out\|alternate` | Ken Burns zoom on every clip. Default is none. |
+| `--zoom-amount PERCENT` | Ken Burns zoom amount from 1 to 100. Default is 10. |
 | `--name NAME` | Set the CapCut project name. |
 | `--dry-run` | Preview without changing CapCut. |
 | `--no-launch` | Create the draft without opening CapCut. |
@@ -366,5 +419,6 @@ keeps the whole source visible; fill crops the source.
 ```text
 "./Media to Capcut Timeline by Banong Gang.command" --assets "/path/to/media" --duration 62
 "./Media to Capcut Timeline by Banong Gang.command" --ratio 9:16 --fps 30
+"./Media to Capcut Timeline by Banong Gang.command" --fill --zoom alternate --zoom-amount 12
 "./Media to Capcut Timeline by Banong Gang.command" --dry-run --no-launch
 ```
