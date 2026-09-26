@@ -27,6 +27,10 @@ Finder. On Windows, double-click Media to Capcut Timeline by Banong Gang.bat.
 SCREENSHOTS
 ----------
 
+Both screenshots show the terminal window while the app runs: the prompts for
+the media folder, duration, audio, project name, ratio, and frame rate, followed
+by the summary and the confirmation to create the CapCut project.
+
   Screenshot 1.png
   Screenshot 2.png
 
