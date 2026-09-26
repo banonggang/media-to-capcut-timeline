@@ -27,11 +27,15 @@ Finder. On Windows, double-click Media to Capcut Timeline by Banong Gang.bat.
 
 The Windows launcher looks for Python 3 through `py -3`, then `python`. It also
 requires ffmpeg.exe and ffprobe.exe for reliable video metadata, audio duration,
-and cover generation. Download both files from
+and cover generation. When one of them is missing, the .bat offers to download it:
+Python is installed silently for the current user, and ffmpeg.exe and ffprobe.exe
+are saved in the same folder as the .bat file, which is added to PATH for the
+run. Answer N to skip the download and read the manual instructions instead. Set
+MEDIATOCAPCUT_NO_SETUP=1 to disable the download prompts. The manual download
+page is
 https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/tag/b6.1.2-rc.1
-and place them beside the .bat file, or add their folder to PATH. The .bat
-prints these instructions in the Command Prompt when either file is missing.
-CapCut must be installed and contain an empty draft template.
+Each file is about 120 MB. CapCut must be installed and contain an empty draft
+template.
 
 The shared core checks the Windows LocalAppData and AppData locations for the
 CapCut draft root. Use `--draft-root PATH` or the `CAPCUT_DRAFT_ROOT`
