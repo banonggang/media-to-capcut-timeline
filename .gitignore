@@ -1,0 +1,8 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+test/
+.banong-backup/
+*.banong-backup
+ffmpeg.exe
+ffprobe.exe
