@@ -23,6 +23,12 @@ review it and export it normally.
 On macOS, double-click Media to Capcut Timeline by Banong Gang.command in
 Finder. On Windows, double-click Media to Capcut Timeline by Banong Gang.bat.
 
+## SCREENSHOTS
+
+![Screenshot 1](Screenshot%201.png)
+
+![Screenshot 2](Screenshot%202.png)
+
 ## WINDOWS REQUIREMENTS
 
 The Windows launcher looks for Python 3 through `py -3`, then `python`. It also

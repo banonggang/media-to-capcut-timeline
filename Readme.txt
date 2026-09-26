@@ -1,5 +1,5 @@
-MEDIA TO CAPCUT TIMELINE BY BANONG GANG
-======================================
+MEDIA TO CAPCUT TIMELINE
+=======================
 
 WHAT THESE FILES ARE
 --------------------
@@ -22,6 +22,16 @@ review it and export it normally.
 
 On macOS, double-click Media to Capcut Timeline by Banong Gang.command in
 Finder. On Windows, double-click Media to Capcut Timeline by Banong Gang.bat.
+
+
+SCREENSHOTS
+----------
+
+  Screenshot 1.png
+  Screenshot 2.png
+
+The same two images are shown near the top of README.md, which GitHub renders
+with the captions used there.
 
 
 WINDOWS REQUIREMENTS
