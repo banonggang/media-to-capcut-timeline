@@ -105,13 +105,26 @@ def same_path(left, right):
     return comparable_path(left) == comparable_path(right)
 
 
+def parse_required_path(value):
+    text = str(value).strip()
+    if not text.strip("'\"\\ "):
+        raise ValueError("enter or drag a folder path")
+    return clean_path(value)
+
+
 def ask(prompt, default, parser=None):
     while True:
+        label = f"{prompt}: " if default is None else f"{prompt} [{default}]: "
         try:
-            answer = input(f"{prompt} [{default}]: ").strip()
+            answer = input(label).strip()
         except EOFError:
+            if default is None:
+                raise RuntimeError(f"{prompt} is required.") from None
             return parser(default) if parser is not None else default
         if not answer:
+            if default is None:
+                print("A value is required.")
+                continue
             return parser(default) if parser is not None else default
         if parser is None:
             return answer
@@ -261,36 +274,6 @@ def media_files(folder):
     files = [path for path in folder.iterdir() if path.is_file() and path.suffix.casefold() in MEDIA_EXTENSIONS]
     files.sort(key=lambda path: natural_key(path.name))
     return files
-
-
-def candidate_asset_folders(downloads):
-    candidates = []
-    if not downloads.is_dir():
-        return candidates
-    for base, directories, files in os.walk(downloads):
-        path = Path(base)
-        try:
-            depth = len(path.relative_to(downloads).parts)
-        except ValueError:
-            depth = 0
-        directories[:] = [name for name in directories if not name.startswith(".") and name not in {"icons", "node_modules", "vendor"} and depth < 3]
-        direct = [name for name in files if Path(name).suffix.casefold() in MEDIA_EXTENSIONS]
-        if direct:
-            newest = max((path / name).stat().st_mtime for name in direct)
-            name_key = path.name.casefold()
-            candidates.append((("autoflow" in name_key), len(direct) == 7, newest, -depth, path))
-    candidates.sort(key=lambda item: item[:4], reverse=True)
-    return [item[4] for item in candidates]
-
-
-def default_asset_folder():
-    downloads = Path.home() / "Downloads"
-    candidates = candidate_asset_folders(downloads)
-    if candidates:
-        return candidates[0]
-    if downloads.is_dir():
-        return downloads
-    return Path.home() / "Desktop"
 
 
 def parse_fraction(value):
@@ -1499,6 +1482,15 @@ def self_test():
             raise RuntimeError("Prompt default self-test failed.")
     finally:
         builtins.input = original_input
+    typed_answers = iter(["", "   ", '""', "'  '", '"/tmp/my media folder" ', "/tmp/my\\ media\\ folder2 "])
+    try:
+        builtins.input = lambda prompt: next(typed_answers)
+        first = ask("Assets folder", None, parse_required_path)
+        second = ask("Assets folder", None, parse_required_path)
+    finally:
+        builtins.input = original_input
+    if first != Path("/tmp/my media folder").resolve() or second != Path("/tmp/my media folder2").resolve():
+        raise RuntimeError(f"Required prompt self-test failed: {first}, {second}")
     sample = {"id": new_id(), "duration": timing["total"]}
     if json.loads(json.dumps(sample)) != sample:
         raise RuntimeError("JSON self-test failed.")
@@ -1544,15 +1536,14 @@ def main():
     print(f"CapCut drafts: {root}")
     if not args.dry_run and capcut_is_running():
         raise RuntimeError("CapCut is running. Quit CapCut completely, then run this command again.")
-    default_assets = default_asset_folder()
     if args.assets:
         assets = clean_path(args.assets)
     else:
-        print(f"Detected asset folder: {default_assets}")
-        entered = ask("Assets folder", str(default_assets), clean_path)
-        assets = entered
+        print("Drag your media folder into this window, or type its full path.")
+        assets = ask("Assets folder", None, parse_required_path)
     if not assets.is_dir():
-        raise RuntimeError(f"Asset folder does not exist: {assets}")
+        hint = " That is a file. Drag the folder that contains your media instead." if assets.is_file() else ""
+        raise RuntimeError(f"Asset folder does not exist: {assets}.{hint}")
     media = media_files(assets)
     if not media:
         raise RuntimeError(f"No supported images or videos were found in: {assets}")

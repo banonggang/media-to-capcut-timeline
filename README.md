@@ -220,16 +220,25 @@ Supported audio extensions are:
    macOS: Media to Capcut Timeline by Banong Gang.command
    Windows: Media to Capcut Timeline by Banong Gang.bat
 
-4. Review the detected asset folder.
+4. Give the tool your media folder.
 
-   Press Enter to accept it, or drag the correct folder into the Terminal or
-   Command Prompt window and press Enter.
+   The tool never scans your Downloads, Desktop, or any other folder for you.
+   Type the full path, or drag the folder straight into the Terminal or Command
+   Prompt window and press Enter:
+
+   ```text
+   Assets folder:
+   ```
+
+   Dragging works on both platforms. The quotes Windows adds and the backslash
+   escapes the macOS Terminal adds are removed for you, so a folder name with
+   spaces works either way. Pressing Enter without a path is refused, and the
+   prompt asks again.
 
 5. Review the remaining settings.
 
    Typical prompts are:
 
-   Assets folder
    Target length in seconds or M:SS
    Last clip length in seconds
    Optional audio file
