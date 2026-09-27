@@ -33,6 +33,9 @@ by the summary and the confirmation to create the CapCut project.
 
 ![Terminal window running the app, Screenshot 2](Screenshot%202.png)
 
+[![Watch the video](https://youtu.be/da239NTwYMI)](https://youtu.be/da239NTwYMI)
+
+
 ## WINDOWS REQUIREMENTS
 
 The Windows launcher looks for Python 3 through `py -3`, then `python`. It also
