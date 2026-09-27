@@ -33,7 +33,7 @@ by the summary and the confirmation to create the CapCut project.
 
 ![Terminal window running the app, Screenshot 2](Screenshot%202.png)
 
-[![Watch the video](https://youtu.be/da239NTwYMI)](https://youtu.be/da239NTwYMI)
+[![Watch the video](https://youtu.be/da239NTwYMI)](https://youtu.be)
 
 
 ## WINDOWS REQUIREMENTS
