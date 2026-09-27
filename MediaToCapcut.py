@@ -303,14 +303,17 @@ def parse_file_timestamp(path):
     stem = Path(path).stem.strip()
     stem = re.sub(r"\s*#\d+\s*$", "", stem)
     stem = re.sub(r"\s*\(\d+\)\s*$", "", stem)
+    stem = re.sub(r"\s+copy\s*$", "", stem, flags=re.IGNORECASE)
     stem = re.sub(r"_[A-Za-z]$", "", stem)
     stem = re.sub(r"^\d+\s+", "", stem)
+    if re.fullmatch(r"(?:19|20)\d{2}[-_.]\d{1,2}[-_.]\d{1,2}", stem):
+        return None
     stem = re.sub(r"^\d{4,}[-_]", "", stem)
     patterns = [
-        r"^(\d{1,3})[-_](\d{2})[-_](\d{2})(?:[.,](\d+))?$",
-        r"^(\d{1,3})\.(\d{2})\.(\d{2})(?:[.,](\d+))?$",
-        r"^(\d{1,2})[-_](\d{2})(?:[.,](\d+))?$",
-        r"^(\d{2})\.(\d{1,2})(?:[.,](\d+))?$",
+        r"^(\d{1,3})[-_](\d{1,2})[-_](\d{1,2})(?:[.,](\d+))?$",
+        r"^(\d{1,3})\.(\d{1,2})\.(\d{1,2})(?:[.,](\d+))?$",
+        r"^(\d{1,2})[-_](\d{1,2})(?:[.,](\d+))?$",
+        r"^(\d{1,2})\.(\d{1,2})(?:[.,](\d+))?$",
     ]
     for index, pattern in enumerate(patterns):
         match = re.fullmatch(pattern, stem)
@@ -1431,12 +1434,21 @@ def self_test():
         "0-11.jpeg": 11.0,
         "01-02-03.png": 3723.0,
         "00-00-07.966.png": 7.966,
-        "83.5.png": 4985.0
+        "83.5.png": 4985.0,
+        "0-6.png": 6.0,
+        "0.06.png": 6.0,
+        "1-2-3.png": 3723.0,
+        "0-00 copy.png": 0.0,
+        "0-00 COPY.png": 0.0,
+        "0-00-6.png": 6.0
     }
     for name, expected in cases.items():
         actual = parse_file_timestamp(name)
         if actual is None or abs(actual - expected) > 0.0001:
             raise RuntimeError(f"Self-test failed for {name}: {actual}")
+    for name in ["2026-09-26.png", "1999-12-31.jpg", "photo.png", "0-60.png", "0-0-0-0.png"]:
+        if parse_file_timestamp(name) is not None:
+            raise RuntimeError(f"Self-test expected no timestamp for {name}.")
     media = [Path(f"00-00-{index:02d}.000.png") for index in range(7)]
     timing = build_timing(media, "even", 30, 62.0, 5.0)
     if len(timing["boundaries"]) != 8 or timing["total"] != 62_000_000:
@@ -1549,14 +1561,21 @@ def main():
     if any(path.suffix.casefold() == ".webp" for path in media):
         print("WARNING: Some CapCut versions may not render .webp images.")
     mode = args.timing
+    unparsed = []
     if mode == "auto":
         parsed_timestamps = [parse_file_timestamp(path) for path in media]
         if all(value is not None for value in parsed_timestamps):
             mode = "filename"
         else:
             mode = "even"
-            if any(value is not None for value in parsed_timestamps):
-                print("WARNING: Some media filenames contain timestamps, but not all; using even spacing.")
+            unparsed = [path.name for path, value in zip(media, parsed_timestamps) if value is None]
+            if unparsed:
+                shown = ", ".join(unparsed[:8]) + (f", and {len(unparsed) - 8} more" if len(unparsed) > 8 else "")
+                print()
+                print(f"WARNING: {len(unparsed)} of {len(media)} filenames have no timestamp this tool can read,")
+                print("so every clip is spaced evenly instead of following the filenames.")
+                print(f"Files that stopped timestamp mode: {shown}")
+                print("Rename them like 0-06.jpg, or pass --timing list with a timestamp file for exact control.")
     target_seconds = args.duration
     if target_seconds is None:
         if mode == "even":
@@ -1615,7 +1634,7 @@ def main():
     print()
     print(f"Project: {name}")
     print(f"Media: {len(media)} ({image_count} images, {video_count} videos)")
-    print(f"Timing: {mode}")
+    print(f"Timing: {mode}" + (f" ({len(unparsed)} of {len(media)} filenames had no readable timestamp)" if unparsed else ""))
     print(f"Length: {format_time(timing['total'])}")
     print(f"Average clip: {format_time(timing['total'] // len(media))}")
     print(f"Ratio: {ratio} at {fps} fps")
