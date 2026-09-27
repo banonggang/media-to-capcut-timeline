@@ -243,9 +243,9 @@ Supported audio extensions are:
    Last clip length in seconds
    Optional audio file
    CapCut project name
-   Ratio
-   Frame rate
-   Ken Burns zoom (none/in/out/alternate)
+   Ratio ( 16:9 [h] | 9:16 [v] | 1:1 [s] )
+   Frame rate ( 24 [c] | 25 [p] | 30 [d] | 50 [f] | 60 [s] )
+   Ken Burns zoom ( none | in [i] | out [o] | alternate [a] )
    Ken Burns zoom amount in percent
 
    The target-length prompt is shown for even-spacing mode. Timestamp mode uses
@@ -364,9 +364,13 @@ keyframes in CapCut's keyframe panel. Choose one of four modes:
 | Mode | Effect on each clip |
 | --- | --- |
 | `none` | No zoom. This is the default. |
-| `in` | Starts at the placement scale and slowly zooms in. |
-| `out` | Starts zoomed in and slowly pulls back to the placement scale. |
-| `alternate` | Clip 1 zooms in, clip 2 zooms out, clip 3 zooms in, and so on. |
+| `in` | Starts at the placement scale and slowly zooms in. Shortcut: `i`. |
+| `out` | Starts zoomed in and slowly pulls back to the placement scale. Shortcut: `o`. |
+| `alternate` | Clip 1 zooms in, clip 2 zooms out, clip 3 zooms in, and so on. Shortcut: `a`. |
+
+The prompt reads `Ken Burns zoom ( none | in [i] | out [o] | alternate [a] ) [none]:`.
+Press Enter for no zoom, or type a single letter. Typing `n` also selects none, and
+the same shortcuts work for the `--zoom` flag, so `--zoom i` means `--zoom in`.
 
 The zoom amount is a percentage from 1 to 100 and defaults to 10. The animation
 is linear and covers each clip from its own first frame to its own last frame,
@@ -382,7 +386,7 @@ borders.
 At the prompt, answer:
 
 ```text
-Ken Burns zoom (none/in/out/alternate) [none]:
+Ken Burns zoom ( none | in [i] | out [o] | alternate [a] ) [none]:
 ```
 
 Or set it directly:
@@ -410,11 +414,11 @@ so a dry run shows exactly what a real run would apply.
 | `--duration SECONDS` | Set the even-spacing duration, such as 62 or 1:02. |
 | `--last-duration SECONDS` | Set the final media duration in timestamp mode. |
 | `--audio PATH` | Add an audio file. |
-| `--ratio 16:9\|9:16\|1:1` | Select the canvas ratio. |
-| `--fps 24\|25\|30\|50\|60` | Select the frame rate. |
+| `--ratio 16:9\|9:16\|1:1` | Select the canvas ratio. Shortcuts: `h`, `v`, `s`. |
+| `--fps 24\|25\|30\|50\|60` | Select the frame rate. Shortcuts: `c`, `p`, `d`, `f`, `s`. |
 | `--fit` | Keep the whole image or video frame visible, scaling it to fit. |
 | `--fill` | Enlarge media to cover the frame and crop any excess. |
-| `--zoom none\|in\|out\|alternate` | Ken Burns zoom on every clip. Default is none. |
+| `--zoom none\|in\|out\|alternate` | Ken Burns zoom on every clip. Default is none. Shortcuts: `i`, `o`, `a`. |
 | `--zoom-amount PERCENT` | Ken Burns zoom amount from 1 to 100. Default is 10. |
 | `--name NAME` | Set the CapCut project name. |
 | `--dry-run` | Preview without changing CapCut. |

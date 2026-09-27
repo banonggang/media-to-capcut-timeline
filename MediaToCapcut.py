@@ -20,6 +20,8 @@ MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 UUID_PATTERN = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 TEXT_NAMES = {"draft_settings", "draft.extra", "template.tmp", "template-2.tmp"}
+# Old CapCut wrote draft_info.json; current CapCut writes draft_content.json.
+DRAFT_INFO_NAMES = ("draft_info.json", "draft_content.json")
 
 
 def new_id():
@@ -44,6 +46,18 @@ def write_json_atomic(path, value):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+
+
+def draft_info_name(folder):
+    # Returns the draft payload filename this CapCut version actually uses.
+    for name in DRAFT_INFO_NAMES:
+        if (Path(folder) / name).is_file():
+            return name
+    return DRAFT_INFO_NAMES[0]
+
+
+def draft_info_path(folder):
+    return Path(folder) / draft_info_name(folder)
 
 
 def parse_number(value):
@@ -212,11 +226,14 @@ def find_capcut_app():
             base = Path(value)
             candidates.extend([
                 base / "CapCut/CapCut.exe",
+                base / "CapCut/Apps/CapCut.exe",
                 base / "Programs/CapCut/CapCut.exe",
+                base / "Programs/CapCut/Apps/CapCut.exe",
                 base / "CapCut Desktop/CapCut.exe",
             ])
         candidates.extend([
             Path.home() / "AppData/Local/CapCut/CapCut.exe",
+            Path.home() / "AppData/Local/CapCut/Apps/CapCut.exe",
             Path.home() / "AppData/Local/Programs/CapCut/CapCut.exe",
             Path.home() / "AppData/Roaming/CapCut/CapCut.exe",
         ])
@@ -227,6 +244,20 @@ def find_capcut_app():
         for candidate in candidates:
             if candidate.is_file():
                 return candidate
+        # Current CapCut builds install as Apps\\CapCut.exe alongside versioned
+        # Apps\\<version>\\CapCut.exe folders, which none of the fixed paths above match.
+        apps_roots = [Path.home() / "AppData/Local/CapCut/Apps"]
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            apps_roots.insert(0, Path(local_app_data) / "CapCut/Apps")
+        for apps in apps_roots:
+            if not apps.is_dir():
+                continue
+            if (apps / "CapCut.exe").is_file():
+                return apps / "CapCut.exe"
+            versions = [item for item in apps.iterdir() if item.is_dir() and (item / "CapCut.exe").is_file()]
+            for folder in sorted(versions, key=lambda item: item.stat().st_mtime, reverse=True):
+                return folder / "CapCut.exe"
         return None
     candidates = [Path("/Applications/CapCut.app"), Path.home() / "Applications/CapCut.app"]
     for candidate in candidates:
@@ -527,21 +558,46 @@ def audio_duration(path):
     raise RuntimeError(f"Could not read audio duration: {path}")
 
 
+def is_placeholder_only(info):
+    # Current CapCut seeds every new project with a 3 second "Default text" on a
+    # text track instead of a blank timeline, so a fresh project never passes a
+    # strict emptiness test. install_project() clears every track and material list
+    # before writing, so that placeholder never reaches the generated project. Only
+    # that exact placeholder is tolerated; any real media or text still rejects it.
+    materials = info.get("materials", {})
+    for key, values in materials.items():
+        if not isinstance(values, list) or not values:
+            continue
+        if key == "texts":
+            if not all("Default text" in str(item.get("content", "")) for item in values):
+                return False
+        elif key == "material_animations":
+            if not all(not item.get("animations") for item in values):
+                return False
+        else:
+            return False
+    text_ids = {item.get("id") for item in materials.get("texts", [])}
+    for track in info.get("tracks", []):
+        segments = track.get("segments") or []
+        if not segments:
+            continue
+        if track.get("type") != "text":
+            return False
+        if not all(segment.get("material_id") in text_ids for segment in segments):
+            return False
+    return True
+
+
 def is_empty_project(folder):
-    info_path = folder / "draft_info.json"
+    info_path = draft_info_path(folder)
     if not info_path.is_file():
         return False
     try:
         info = load_json(info_path)
     except Exception:
         return False
-    if info.get("duration", 0) != 0:
+    if not is_placeholder_only(info):
         return False
-    if any(track.get("segments") for track in info.get("tracks", [])):
-        return False
-    for values in info.get("materials", {}).values():
-        if isinstance(values, list) and values:
-            return False
     return (folder / "Timelines/project.json").is_file()
 
 
@@ -554,7 +610,7 @@ def find_template(root, explicit=None):
     candidates = [path for path in root.iterdir() if path.is_dir() and is_empty_project(path)]
     if not candidates:
         raise RuntimeError("No empty CapCut project was found. Open CapCut, create one new empty project, quit CapCut, and run this command again.")
-    candidates.sort(key=lambda path: (path / "draft_info.json").stat().st_mtime, reverse=True)
+    candidates.sort(key=lambda path: draft_info_path(path).stat().st_mtime, reverse=True)
     return candidates[0]
 
 
@@ -1130,12 +1186,12 @@ def registration(path, width, height, duration, metetype, now_seconds, now_micro
 
 
 def validate_generated(target, root_meta, media_count, audio_expected, total):
-    info = load_json(target / "draft_info.json")
+    info = load_json(draft_info_path(target))
     meta = load_json(target / "draft_meta_info.json")
     project = load_json(target / "Timelines/project.json")
     timeline_id = info["id"]
     timeline = target / "Timelines" / timeline_id
-    if not timeline.is_dir() or load_json(timeline / "draft_info.json") != info:
+    if not timeline.is_dir() or load_json(draft_info_path(timeline)) != info:
         raise RuntimeError("The generated timeline copy is invalid.")
     if project.get("main_timeline_id") != timeline_id:
         raise RuntimeError("The CapCut project index does not match the timeline.")
@@ -1185,7 +1241,7 @@ def install_project(root, template, name, timing, ratio, fps, placement, audio, 
     try:
         shutil.copytree(template, staging)
         id_map = replace_ids_and_timeline(staging)
-        info = load_json(staging / "draft_info.json")
+        info = load_json(draft_info_path(staging))
         timeline_id = id_map.get(info.get("id", "").upper(), new_id())
         if timeline_id not in [item.name for item in (staging / "Timelines").iterdir() if item.is_dir()]:
             old_timeline = staging / "Timelines" / info["id"]
@@ -1254,12 +1310,13 @@ def install_project(root, template, name, timing, ratio, fps, placement, audio, 
         draft_id = new_id()
         now_microseconds = time.time_ns() // 1000
         payload = json.dumps(info, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        draft_file = draft_info_name(staging)
         for relative in [
-            Path("draft_info.json"),
-            Path("draft_info.json.bak"),
+            Path(draft_file),
+            Path(f"{draft_file}.bak"),
             Path("template-2.tmp"),
-            Path("Timelines") / timeline_id / "draft_info.json",
-            Path("Timelines") / timeline_id / "draft_info.json.bak",
+            Path("Timelines") / timeline_id / draft_file,
+            Path("Timelines") / timeline_id / f"{draft_file}.bak",
             Path("Timelines") / timeline_id / "template-2.tmp"
         ]:
             destination = staging / relative
@@ -1316,7 +1373,7 @@ def install_project(root, template, name, timing, ratio, fps, placement, audio, 
             "draft_cover": str(target / "draft_cover.jpg"),
             "draft_fold_path": str(target),
             "draft_id": draft_id,
-            "draft_json_file": str(target / "draft_info.json"),
+            "draft_json_file": str(target / draft_file),
             "draft_name": name,
             "draft_new_version": info.get("new_version", ""),
             "draft_root_path": str(root),
@@ -1370,29 +1427,47 @@ def ratio_height(ratio):
 
 
 def parse_ratio(value):
-    normalized = value.replace("x", ":").replace("/", ":")
-    if normalized not in {"16:9", "9:16", "1:1"}:
-        raise ValueError("choose 16:9, 9:16, or 1:1")
-    return normalized
+    normalized = str(value).strip().casefold().replace("x", ":").replace("/", ":")
+    aliases = {
+        "16:9": "16:9", "h": "16:9", "l": "16:9", "w": "16:9", "horizontal": "16:9", "landscape": "16:9", "wide": "16:9",
+        "9:16": "9:16", "v": "9:16", "p": "9:16", "vertical": "9:16", "portrait": "9:16",
+        "1:1": "1:1", "s": "1:1", "square": "1:1"
+    }
+    if normalized not in aliases:
+        raise ValueError("choose 16:9 [h], 9:16 [v], or 1:1 [s]")
+    return aliases[normalized]
 
 
 def parse_fps(value):
-    number = int(value)
+    normalized = str(value).strip().casefold()
+    aliases = {
+        "c": 24, "24": 24,
+        "p": 25, "25": 25,
+        "d": 30, "3": 30, "30": 30,
+        "f": 50, "5": 50, "50": 50,
+        "s": 60, "6": 60, "60": 60
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    try:
+        number = int(normalized)
+    except (TypeError, ValueError):
+        raise ValueError("choose 24 [c], 25 [p], 30 [d], 50 [f], or 60 [s]") from None
     if number not in {24, 25, 30, 50, 60}:
-        raise ValueError("choose 24, 25, 30, 50, or 60")
+        raise ValueError("choose 24 [c], 25 [p], 30 [d], 50 [f], or 60 [s]")
     return number
 
 
 def parse_zoom(value):
     normalized = str(value).strip().casefold().replace(" ", "").replace("_", "").replace("-", "")
     aliases = {
-        "none": "none", "off": "none", "no": "none",
-        "in": "in", "zoomin": "in",
-        "out": "out", "zoomout": "out",
-        "alternate": "alternate", "alt": "alternate", "alternating": "alternate"
+        "none": "none", "off": "none", "no": "none", "n": "none",
+        "in": "in", "zoomin": "in", "i": "in",
+        "out": "out", "zoomout": "out", "o": "out",
+        "alternate": "alternate", "alt": "alternate", "alternating": "alternate", "a": "alternate"
     }
     if normalized not in aliases:
-        raise ValueError("choose none, in, out, or alternate")
+        raise ValueError("choose none, in [i], out [o], or alternate [a]")
     return aliases[normalized]
 
 
@@ -1445,6 +1520,48 @@ def self_test():
     fit_segment = make_photo_segment(new_id(), new_id(), 0, 1_000_000, 1376, 768, 1920, 1080, "fit", [])
     if native_segment["clip"]["scale"] != {"x": 1.0, "y": 1.0} or abs(fill_segment["clip"]["scale"]["x"] - 1.40625) > 0.00001 or abs(fit_segment["clip"]["scale"]["x"] - 1.3953488372) > 0.00001:
         raise RuntimeError("Scale self-test failed.")
+    zoom_shortcuts = {"i": "in", "I": "in", "o": "out", "O": "out", "a": "alternate", "A": "alternate", "n": "none", "N": "none", " in ": "in", "Alternate": "alternate"}
+    for typed, expected in zoom_shortcuts.items():
+        if parse_zoom(typed) != expected:
+            raise RuntimeError(f"Zoom shortcut self-test failed for {typed!r}.")
+    for bad in ["z", "ii", "1", "in out"]:
+        try:
+            parse_zoom(bad)
+        except ValueError:
+            continue
+        raise RuntimeError(f"Zoom shortcut self-test expected a rejection for {bad!r}.")
+    ratio_shortcuts = {"h": "16:9", "H": "16:9", "l": "16:9", "w": "16:9", "landscape": "16:9", "16x9": "16:9", "16/9": "16:9", " 16:9 ": "16:9",
+                       "v": "9:16", "V": "9:16", "p": "9:16", "portrait": "9:16", "9x16": "9:16", "9/16": "9:16",
+                       "s": "1:1", "S": "1:1", "square": "1:1", "1x1": "1:1", "1/1": "1:1"}
+    for typed, expected in ratio_shortcuts.items():
+        if parse_ratio(typed) != expected:
+            raise RuntimeError(f"Ratio shortcut self-test failed for {typed!r}.")
+    for bad in ["z", "4:3", "16:8", "16", ""]:
+        try:
+            parse_ratio(bad)
+        except ValueError:
+            continue
+        raise RuntimeError(f"Ratio shortcut self-test expected a rejection for {bad!r}.")
+    fps_shortcuts = {"c": 24, "C": 24, "24": 24, "p": 25, "P": 25, "25": 25, "d": 30, "D": 30, "3": 30, "30": 30,
+                     "f": 50, "F": 50, "5": 50, "50": 50, "s": 60, "S": 60, "6": 60, "60": 60, " 30 ": 30}
+    for typed, expected in fps_shortcuts.items():
+        actual = parse_fps(typed)
+        if actual != expected or not isinstance(actual, int):
+            raise RuntimeError(f"Frame rate shortcut self-test failed for {typed!r}: {actual!r}")
+    for bad in ["z", "1", "0", "abc", "", "29.97", "-30"]:
+        try:
+            parse_fps(bad)
+        except ValueError:
+            continue
+        raise RuntimeError(f"Frame rate shortcut self-test expected a rejection for {bad!r}.")
+    # Colour must never leak escape codes into a redirected stream or NO_COLOR.
+    if cyan("Title", False) != "Title" or "\x1b" in cyan("Title", False):
+        raise RuntimeError("Colour self-test failed: colour was emitted while disabled.")
+    painted = cyan("Title", True)
+    if not painted.startswith("\x1b[36m") or not painted.endswith("\x1b[0m") or "Title" not in painted:
+        raise RuntimeError("Colour self-test failed: the cyan wrapper is malformed.")
+    if not isinstance(enable_color(), bool):
+        raise RuntimeError("Colour self-test failed: enable_color must return a bool.")
     zoom_cases = {
         "none": [(1.0, 1.0), (1.0, 1.0)],
         "in": [(1.0, 1.1), (1.0, 1.1)],
@@ -1475,6 +1592,41 @@ def self_test():
     fill_values = [frame["values"][0] for frame in fill_zoom[0]["common_keyframes"][0]["keyframe_list"]]
     if abs(fill_values[0] - 1.40625) > 0.00001 or abs(fill_values[1] - 1.40625 * 1.1) > 0.00001:
         raise RuntimeError("Zoom self-test failed: fill placement scale was not preserved.")
+    # A fresh CapCut project carries a seeded "Default text"; it must pass as a
+    # template, while anything a user actually added must still be rejected.
+    placeholder_text = {"id": "T1", "type": "text", "content": '{"text":"Default text","styles":[]}'}
+    blank_animation = {"id": "A1", "type": "sticker_animation", "animations": []}
+    seeded = {
+        "duration": 3_000_000,
+        "tracks": [
+            {"type": "video", "segments": []},
+            {"type": "text", "segments": [{"id": "S1", "material_id": "T1", "target_timerange": {"start": 0, "duration": 3_000_000}}]}
+        ],
+        "materials": {"texts": [placeholder_text], "material_animations": [blank_animation], "videos": []}
+    }
+    if not is_placeholder_only(seeded) or not is_placeholder_only({"tracks": [], "materials": {}}):
+        raise RuntimeError("Placeholder self-test failed: a fresh project should be usable.")
+    rejected = [
+        {**seeded, "materials": {**seeded["materials"], "videos": [{"id": "V1", "type": "photo"}]}},
+        {**seeded, "materials": {**seeded["materials"], "texts": [{"id": "T2", "type": "text", "content": '{"text":"Hello"}'}]}},
+        {**seeded, "materials": {**seeded["materials"], "material_animations": [{"id": "A2", "animations": [{"name": "in"}]}]}},
+        {**seeded, "tracks": [{"type": "video", "segments": [{"id": "S2", "material_id": "V9"}]}]},
+        {**seeded, "tracks": [{"type": "text", "segments": [{"id": "S3", "material_id": "UNKNOWN"}]}]}
+    ]
+    for case in rejected:
+        if is_placeholder_only(case):
+            raise RuntimeError(f"Placeholder self-test failed: a real project was accepted: {case}")
+    # Current CapCut installs as <base>\Apps\CapCut.exe or Apps\<version>\CapCut.exe,
+    # neither of which the older fixed candidate list matched.
+    app = find_capcut_app()
+    if app is None:
+        pass
+    elif not Path(app).is_file():
+        raise RuntimeError(f"CapCut lookup returned a missing file: {app}")
+    elif os.name == "nt" and Path(app).name.casefold() != "capcut.exe":
+        raise RuntimeError(f"CapCut lookup should return CapCut.exe: {app}")
+    elif os.name != "nt" and Path(app).suffix != ".app":
+        raise RuntimeError(f"CapCut lookup should return an .app bundle: {app}")
     original_input = builtins.input
     try:
         builtins.input = lambda prompt: ""
@@ -1524,13 +1676,41 @@ def build_parser():
     return parser
 
 
+def enable_color():
+    # Windows consoles only render ANSI escape sequences once virtual terminal
+    # processing is switched on, and a redirected stream or NO_COLOR must never
+    # receive escape codes, so the banner stays plain text when colour is unsafe.
+    if os.environ.get("NO_COLOR"):
+        return False
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+    if os.name != "nt":
+        return os.environ.get("TERM", "") != "dumb"
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if not handle or handle == -1:
+            return False
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:
+        return False
+
+
+def cyan(text, enabled):
+    return f"\x1b[36m{text}\x1b[0m" if enabled else text
+
+
 def main():
     args = build_parser().parse_args()
     if args.self_test:
         self_test()
         return
     interactive = sys.stdin.isatty()
-    print("Media to Capcut Timeline by Banong Gang")
+    print(cyan("Media to Capcut Timeline by Banong Gang", enable_color()))
     print("==========================")
     root = find_draft_root(args.draft_root)
     print(f"CapCut drafts: {root}")
@@ -1613,9 +1793,9 @@ def main():
         name = ask("CapCut project name", default_name).strip() if interactive else default_name
     if not name or name in {".", ".."} or "/" in name or "\\" in name or "\0" in name:
         raise RuntimeError("Project name is invalid.")
-    ratio = args.ratio or (ask("Ratio", "16:9", parse_ratio) if interactive else "16:9")
-    fps = args.fps or (ask("Frame rate", "30", parse_fps) if interactive else 30)
-    zoom = args.zoom if "--zoom" in sys.argv or not interactive else ask("Ken Burns zoom (none/in/out/alternate)", "none", parse_zoom)
+    ratio = args.ratio or (ask("Ratio ( 16:9 [h] | 9:16 [v] | 1:1 [s] )", "16:9", parse_ratio) if interactive else "16:9")
+    fps = args.fps or (ask("Frame rate ( 24 [c] | 25 [p] | 30 [d] | 50 [f] | 60 [s] )", "30", parse_fps) if interactive else 30)
+    zoom = args.zoom if "--zoom" in sys.argv or not interactive else ask("Ken Burns zoom ( none | in [i] | out [o] | alternate [a] )", "none", parse_zoom)
     zoom_amount = args.zoom_amount
     if zoom != "none" and "--zoom-amount" not in sys.argv and interactive:
         zoom_amount = ask("Ken Burns zoom amount in percent", "10", parse_zoom_amount)
@@ -1649,9 +1829,13 @@ def main():
     for original, backup in backups:
         print(f"Project backup: {backup}")
     app = find_capcut_app()
-    if not args.no_launch and app is not None:
-        if args.yes or ask_yes("Open CapCut now?", True, args.yes):
-            launch_capcut(app)
+    if args.no_launch:
+        return
+    if app is None:
+        print("CapCut.exe was not found automatically. Open CapCut from your Start menu to see the new project.")
+        return
+    if args.yes or ask_yes("Launch CapCut now?", True, args.yes):
+        launch_capcut(app)
 
 
 if __name__ == "__main__":
